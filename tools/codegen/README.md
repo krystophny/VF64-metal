@@ -19,14 +19,19 @@ earlier dependency build cannot supply stale modules or object files.
 the same graph through FortGen's CUDA emitter on the CPU with unsigned 128-bit
 multiply-high primitives and undefined-behavior/float-cast sanitizers. It compares
 four million signed normal input pairs against native binary64 division and the
-exact rational quotient around rounding thresholds. Another million arbitrary
-binary32 seed bit patterns exercise the ordered guard and integer certificate;
-invalid seeds and deliberately inaccurate finite seeds must reject. Controls
-that move a proxy across an exact rounding threshold must fail the rational check.
-These CPU checks do not certify the compiled Metal kernel.
+exact rational quotient around rounding thresholds. Another million selected,
+random and corrupted coefficient pairs check the exact acceptance condition
+with unsigned 128-bit arithmetic. Both accepted and rejected coefficients are
+required; all selected normal coefficients must accept. Controls that move a
+proxy across a rounding threshold must fail the rational check.
+
+On macOS, configure with `-DVF64_BUILD_METAL_TESTING=ON` to register
+`division_gpu`. It checks the production table selector, runtime coefficient
+corruption, fallback results, poisoned outputs and buffer guards against native
+binary64 division. These bounded checks do not prove whole-domain conformance.
 
 Compile consumers with `-fno-fast-math -ffp-contract=off`. The support AIR builder
-sets these flags. The floating estimate stays in the caller and uses explicit
-`metal::fast::divide`; the generated leaf first selects a safe finite seed before
-its eager float-to-integer cast and propagates the original validity predicate.
-See [the arithmetic contract](../../docs/certified-division.md).
+sets these flags. All reciprocal arithmetic is generated through FortGen; only
+table selection and the existing packer/fallback stay in the caller. The
+Berkeley SoftFloat constants and seed formula retain their BSD notice. See
+[the arithmetic contract](../../docs/certified-division.md).
