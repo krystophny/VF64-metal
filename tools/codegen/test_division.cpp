@@ -36,43 +36,44 @@ static bool grid(U u,U v,U z) {
     }
     return true;
 }
+static unsigned reciprocal(unsigned b,unsigned k0,unsigned k1) {
+    const unsigned eps=(b>>11)&65535;
+    const unsigned r0=k0-((k1*eps)>>20);
+    const unsigned sigma=~unsigned((uint64_t(r0)*b)>>7);
+    unsigned r=(r0<<16)+unsigned((uint64_t(r0)*sigma)>>24);
+    const unsigned square=unsigned((uint64_t(sigma)*sigma)>>32);
+    return r+unsigned((uint64_t(r)*square)>>48);
+}
 int main() {
     require(grid(1ull<<62,1ull<<63,1ull<<62));
     require(!grid(1ull<<62,1ull<<63,(1ull<<62)+1));
     require(!grid(1ull<<62,1ull<<63,(1ull<<62)-1));
-    const float invalid[]={-1.0f,std::numeric_limits<float>::infinity(),
-        -std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN(),0x1p33f};
-    U z=0; bool accepted=false,boundary=false;
-    for(float seed:invalid) {
-        soft_certified_division_leaf(1ull<<62,0xfffffffffffff800ull,seed,&z,&accepted,&boundary);
-        require(!accepted);
-    }
-    soft_certified_division_leaf(1ull<<62,0xfffffffffffff800ull,0x1p32f,&z,&accepted,&boundary);
-    require(!accepted); // Valid conversion, deliberately inaccurate seed.
+    U z=0; bool accepted=false,boundary=false,repaired=false;
+    soft_certified_division_leaf(1ull<<62,1ull<<63,0,0,&z,&accepted,&boundary,&repaired);
+    require(!accepted);
     std::mt19937_64 rng(0xC371F1ED);
-    uint64_t certificateRejects=0;
+    uint64_t certificateRejects=0, certificateAccepts=0;
     for(unsigned i=0;i<1000000;++i) {
         const U b=0x80000000ull|unsigned(rng()), v=b<<32;
-        const float seed=std::bit_cast<float>(unsigned(rng()));
-        bool exact=false;
-        if(seed>=0.0f && seed<0x1p33f) {
-            U s=U(seed); if(s<0x80000000ull)s=0x80000000ull;
-            if(s>0xffffffffull)s=0xffffffffull;
-            const W product=W(b)*s,C=W(1)<<63;
-            const bool negative=product>C;
-            const W correction=W(s)*(negative?product-C:C-product)/C;
-            U r=negative?s-U(correction):s+U(correction);
-            if(W(b)*r>=C)--r;
-            exact=W(b)*r<C && W(b)*(r+2)>C;
-        }
-        soft_certified_division_leaf(v>>1,v,seed,&z,&accepted,&boundary);
-        require(accepted==exact);
+        const unsigned index=unsigned(b>>27)&15;
+        unsigned k0=soft_reciprocal_k0[index],k1=soft_reciprocal_k1[index];
+        if(i%3==0) { k0=unsigned(rng());k1=unsigned(rng()); }
+        if(i%3==1) { k0^=1u<<unsigned(rng()%32);k1^=1u<<unsigned(rng()%32); }
+        U r=reciprocal(unsigned(b),k0,k1);
+        const W C=W(1)<<63,raw=W(b)*r;
+        const bool repair=raw<C && C-raw>=2*b;
+        if(repair)++r;
+        const bool exact=raw<C && W(b)*r<C && C-W(b)*r<2*b;
+        soft_certified_division_leaf(v>>1,v,k0,k1,&z,&accepted,&boundary,&repaired);
+        require(accepted==exact && repaired==repair);
         if(accepted)require(grid(v>>1,v,z));
         certificateRejects+=!accepted;
+        certificateAccepts+=accepted;
     }
-    std::printf("1000000 arbitrary float seeds: exact uint128 certificate agreement; rejected=%llu\n",(unsigned long long)certificateRejects);
+    require(certificateRejects>0 && certificateAccepts>0);
+    std::printf("1000000 selected/arbitrary/corrupted coefficient pairs: exact uint128 certificate agreement; rejected=%llu accepted=%llu\n",(unsigned long long)certificateRejects,(unsigned long long)certificateAccepts);
 
-    uint64_t refinements=0, perturbed=0;
+    uint64_t refinements=0, repairs=0;
     for(unsigned i=0;i<4000000;++i) {
         const U ea=1+rng()%2046, eb=1+rng()%2046;
         U a=(ea<<52)|(rng()&0x000fffffffffffffull);
@@ -86,14 +87,15 @@ int main() {
         const U A=(a&0xfffffffffffffull)|(1ull<<52),B=(b&0xfffffffffffffull)|(1ull<<52);
         const bool below=A<B;
         const U v=B<<11,u=below?A<<11:A<<10;
-        float seed=1.0f/(float(unsigned(v>>32))*0x1p-31f)*0x1p32f;
-        if(i%5==0) { seed=std::nextafter(seed,i%2?0.0f:std::numeric_limits<float>::infinity());++perturbed; }
-        soft_certified_division_leaf(u,v,seed,&z,&accepted,&boundary);
+        const unsigned index=unsigned(v>>59)&15;
+        soft_certified_division_leaf(u,v,soft_reciprocal_k0[index],soft_reciprocal_k1[index],&z,&accepted,&boundary,&repaired);
         require(accepted); require(grid(u,v,z)); refinements+=boundary;
+        repairs+=repaired;
         const U bits=pack(((a^b)>>63)!=0,int((a>>52)&2047)-int((b>>52)&2047)+1023-int(below),jam(z,7));
         const U ref=std::bit_cast<U>(std::bit_cast<double>(a)/std::bit_cast<double>(b));
         if(bits!=ref) std::fprintf(stderr,"a=%llx b=%llx bits=%llx ref=%llx\n",a,b,bits,ref);
         require(bits==ref);
     }
-    std::printf("generated leaf: 4000000 signed normal pairs, %llu perturbed seeds, %llu refinements; native binary64 and exact uint128 grid PASS; invalid/poor seeds rejected; wrong-grid controls rejected\n",(unsigned long long)perturbed,(unsigned long long)refinements);
+    require(repairs>0);
+    std::printf("generated leaf: 4000000 signed normal pairs, %llu table repairs, %llu refinements; native binary64 and exact uint128 grid PASS; wrong-grid controls rejected\n",(unsigned long long)repairs,(unsigned long long)refinements);
 }

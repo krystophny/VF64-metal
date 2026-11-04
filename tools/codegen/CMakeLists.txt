@@ -31,3 +31,12 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_link_options(test_division PRIVATE -fsanitize=undefined,float-cast-overflow)
 endif()
 add_test(NAME division_host COMMAND test_division)
+option(VF64_BUILD_METAL_TESTING "Run the Metal reciprocal certificate oracle" OFF)
+if(VF64_BUILD_METAL_TESTING)
+    if(NOT APPLE)
+        message(FATAL_ERROR "VF64_BUILD_METAL_TESTING requires macOS and a Metal GPU")
+    endif()
+    add_test(NAME division_gpu COMMAND sh
+        ${CMAKE_CURRENT_SOURCE_DIR}/check-division-gpu.sh
+        ${VF64_SHADER_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/division-gpu)
+endif()
